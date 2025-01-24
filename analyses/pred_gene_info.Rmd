@@ -1,16 +1,23 @@
 ---
 title: "Predicted gene info"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
 ```{r}
-library(tidyverse)
+suppressPackageStartupMessages(library(tidyverse))
 
-genes <- read_tsv("data/predicted_genes.tsv", col_types = "ccc")
+genes <- read_tsv("../data/predicted_genes.tsv", col_types = "ccc")
 
-expr <- read_tsv("data/eqtl/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
-                 skip = 2, col_types = cols(Name = "c", Description = "c", .default = "d")) |>
-    # mutate(Name = str_replace(Name, "\\..+$", "")) |>
+expr <- read_tsv(
+    "../data/eqtl/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
+    skip = 2, col_types = cols(Name = "c", Description = "c", .default = "d")
+) |>
     rename(gene_id = Name,
            gene_name = Description) |>
     filter(gene_name %in% genes$gene_name) |>
@@ -25,7 +32,6 @@ I'm replacing KPNA17 with KPNA2, since I can't find KPNA17, and KPNA2 is in the 
 expr |>
     mutate(log2_med_tpm = log2(med_tpm + 1)) |>
     ggplot(aes(x = gene_name, y = log2_med_tpm), color = tissue) +
-    # geom_point() +
     geom_boxplot()
 ```
 
@@ -33,8 +39,6 @@ expr |>
 expr |>
     mutate(log2_med_tpm = log2(med_tpm + 1)) |>
     ggplot(aes(x = gene_name, y = log2_med_tpm, fill = tissue_brain)) +
-    # geom_jitter()
-    # ggbeeswarm::geom_beeswarm()
     geom_boxplot() +
     xlab("Gene") +
     ylab("log2(median(TPM) + 1) per tissue") +
@@ -47,33 +51,31 @@ expr |>
 ```
 
 ```{r}
-eqtls <- tibble(fname = list.files("data/eqtl/GTEx_Analysis_v8_eQTL_independent/")) |>
+eqtls <- tibble(fname = list.files("../data/eqtl/GTEx_Analysis_v8_eQTL_independent/")) |>
     mutate(tissue = str_replace(fname, "\\.v8.+$", "")) |>
-    group_by(tissue) |>
-    summarise(
+    reframe(
         read_tsv(
-            str_c("data/eqtl/GTEx_Analysis_v8_eQTL_independent/", fname),
+            str_c("../data/eqtl/GTEx_Analysis_v8_eQTL_independent/", fname),
             col_types = cols(gene_id = "c", variant_id = "c", pval_beta = "d", .default = "-")
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
     filter(gene_id %in% expr$gene_id) |>
-    left_join(distinct(expr, gene_id, gene_name), by = "gene_id") |>
+    left_join(distinct(expr, gene_id, gene_name), by = "gene_id", relationship = "many-to-one") |>
     relocate(gene_id, gene_name, .after = tissue)
 
-sqtls <- tibble(fname = list.files("data/eqtl/GTEx_Analysis_v8_sQTL_independent/")) |>
+sqtls <- tibble(fname = list.files("../data/eqtl/GTEx_Analysis_v8_sQTL_independent/")) |>
     mutate(tissue = str_replace(fname, "\\.v8.+$", "")) |>
-    group_by(tissue) |>
-    summarise(
+    reframe(
         read_tsv(
-            str_c("data/eqtl/GTEx_Analysis_v8_sQTL_independent/", fname),
+            str_c("../data/eqtl/GTEx_Analysis_v8_sQTL_independent/", fname),
             col_types = cols(group_id = "c", variant_id = "c", pval_beta = "d", .default = "-")
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
     rename(gene_id = group_id) |>
     filter(gene_id %in% expr$gene_id) |>
-    left_join(distinct(expr, gene_id, gene_name), by = "gene_id") |>
+    left_join(distinct(expr, gene_id, gene_name), by = "gene_id", relationship = "many-to-one") |>
     relocate(gene_id, gene_name, .after = tissue)
 ```
 

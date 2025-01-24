@@ -3,8 +3,6 @@ title: "Vestibular colocalization and gene info"
 output:
   html_document:
     df_print: paged
-  html_notebook:
-    code_folding: hide
 ---
 
 ## Colocalization
@@ -18,17 +16,16 @@ knitr::opts_chunk$set(echo=FALSE)
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 
-d <- tibble(tissue = read_lines("data/eqtl/tissues.txt")) |>
-    group_by(tissue) |>
-    summarise(
+d <- tibble(tissue = read_lines("../data/eqtl/tissues.txt")) |>
+    reframe(
         read_table(
-            str_glue("data/fastenloc/EUR_balance180.{tissue}.enloc.sig.out"),
+            str_glue("../data/fastenloc/EUR_balance180/EUR_balance180.{tissue}.enloc.sig.out"),
             col_types = "ciddddd"
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
-    separate(Signal, into = c("eqtl", "loc"), sep = "\\(@\\)", convert = TRUE) |>
-    separate(eqtl, into = c("gene_id", "eqtl_cluster"), sep = ":", convert = TRUE)
+    separate_wider_delim(Signal, "(@)", names = c("eqtl", "loc")) |>
+    separate_wider_delim(eqtl, ":", names = c("gene_id", "eqtl_cluster"))
 ```
 
 fastENLOC uses Bayesian statistics and reports colocalizations at the SNP, locus, and gene level, but the main result is RCP, regional colocalization probability, per gene. It is the probability that any single SNP in the region is causal for both signals. That means that if the GWAS and eQTL signals are spread across multiple SNPs in high LD, the RCP will not be high because the probability of any one of the SNPs being causal for both is not high.
@@ -72,28 +69,23 @@ In the original fastENLOC paper, they define putative causal gene contributors a
 <!-- https://exphewas.statgen.org/v1/gene/ENSG00000230641 -->
 
 ```{r}
-genes <- read_tsv("data/reference/human_gene_info.txt", col_types = "cciicccc") |>
+genes <- read_tsv("../data/reference/human_gene_info.txt", col_types = "cciicccc") |>
     select(gene_id = `Gene stable ID`,
            gene_name = `Gene name`,
            synonym = `Gene Synonym`,
            chrom = `Chromosome/scaffold name`,
            tss = `Transcription start site (TSS)`,
-           # wikigene_id = `WikiGene ID`,
            description = `Gene description`) |>
     filter(gene_id %in% d_top$gene_id) |>
-    group_by(gene_id) |>
-    # sample_n(1) |>
-    # ungroup()
     summarise(
         gene_name = gene_name[1],
         chrom = chrom[1],
         tss = sample(tss, 1),
         synonym = str_c(unique(synonym), collapse = "; "),
         description = description[1],
-        .groups = "drop"
+        .by = gene_id
     )
-    # arrange(chrom, tss)
-# genes
+
 # Order by top colocs:
 d_top |>
     distinct(gene_id) |>
@@ -105,11 +97,12 @@ d_top |>
 I looked at GTEx gene expression, eQTLs, and sQTLs for the predicted genes within GWAS loci from the paper.
 
 ```{r}
-pred_genes <- read_tsv("data/predicted_genes.tsv", col_types = "ccc")
+pred_genes <- read_tsv("../data/predicted_genes.tsv", col_types = "ccc")
 
-expr <- read_tsv("data/eqtl/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
-                 skip = 2, col_types = cols(Name = "c", Description = "c", .default = "d")) |>
-    # mutate(Name = str_replace(Name, "\\..+$", "")) |>
+expr <- read_tsv(
+    "../data/eqtl/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
+    skip = 2, col_types = cols(Name = "c", Description = "c", .default = "d")
+) |>
     rename(gene_id = Name,
            gene_name = Description) |>
     filter(gene_name %in% pred_genes$gene_name) |>
@@ -121,19 +114,9 @@ expr <- read_tsv("data/eqtl/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_media
 I'm replacing KPNA17 with KPNA2, since I can't find KPNA17, and KPNA2 is in the QTL region. I'm also ignoring COMMD3-BMI1, which is a readthrough transcript of two other predicted genes, and it isn't in the GTEx data.
 
 ```{r}
-# expr |>
-#     mutate(log2_med_tpm = log2(med_tpm + 1)) |>
-#     ggplot(aes(x = gene_name, y = log2_med_tpm), color = tissue) +
-#     # geom_point() +
-#     geom_boxplot()
-```
-
-```{r}
 expr |>
     mutate(log2_med_tpm = log2(med_tpm + 1)) |>
     ggplot(aes(x = gene_name, y = log2_med_tpm, fill = tissue_brain)) +
-    # geom_jitter()
-    # ggbeeswarm::geom_beeswarm()
     geom_boxplot() +
     xlab("Gene") +
     ylab("log2(median(TPM) + 1) per tissue") +
@@ -147,33 +130,31 @@ expr |>
 ```
 
 ```{r}
-eqtls <- tibble(fname = list.files("data/eqtl/GTEx_Analysis_v8_eQTL_independent/")) |>
+eqtls <- tibble(fname = list.files("../data/eqtl/GTEx_Analysis_v8_eQTL_independent/")) |>
     mutate(tissue = str_replace(fname, "\\.v8.+$", "")) |>
-    group_by(tissue) |>
-    summarise(
+    reframe(
         read_tsv(
-            str_c("data/eqtl/GTEx_Analysis_v8_eQTL_independent/", fname),
+            str_c("../data/eqtl/GTEx_Analysis_v8_eQTL_independent/", fname),
             col_types = cols(gene_id = "c", variant_id = "c", pval_beta = "d", .default = "-")
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
     filter(gene_id %in% expr$gene_id) |>
-    left_join(distinct(expr, gene_id, gene_name), by = "gene_id") |>
+    left_join(distinct(expr, gene_id, gene_name), by = "gene_id", relationship = "many-to-one") |>
     relocate(gene_id, gene_name, .after = tissue)
 
-sqtls <- tibble(fname = list.files("data/eqtl/GTEx_Analysis_v8_sQTL_independent/")) |>
+sqtls <- tibble(fname = list.files("../data/eqtl/GTEx_Analysis_v8_sQTL_independent/")) |>
     mutate(tissue = str_replace(fname, "\\.v8.+$", "")) |>
-    group_by(tissue) |>
-    summarise(
+    reframe(
         read_tsv(
-            str_c("data/eqtl/GTEx_Analysis_v8_sQTL_independent/", fname),
+            str_c("../data/eqtl/GTEx_Analysis_v8_sQTL_independent/", fname),
             col_types = cols(group_id = "c", variant_id = "c", pval_beta = "d", .default = "-")
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
     rename(gene_id = group_id) |>
     filter(gene_id %in% expr$gene_id) |>
-    left_join(distinct(expr, gene_id, gene_name), by = "gene_id") |>
+    left_join(distinct(expr, gene_id, gene_name), by = "gene_id", relationship = "many-to-one") |>
     relocate(gene_id, gene_name, .after = tissue)
 ```
 

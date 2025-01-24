@@ -3,8 +3,6 @@ title: "GTEx harmonized GWAS colocalization"
 output:
   html_document:
     df_print: paged
-  html_notebook:
-    code_folding: hide
 ---
 
 This is a positive control using GTEx harmonized GWAS for height in UK Biobank.
@@ -18,17 +16,16 @@ knitr::opts_chunk$set(echo=FALSE)
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 
-d <- tibble(tissue = read_lines("data/eqtl/tissues.txt")) |>
-    group_by(tissue) |>
-    summarise(
+d <- tibble(tissue = read_lines("../data/eqtl/tissues.txt")) |>
+    reframe(
         read_table(
-            str_glue("data/fastenloc/imputed_UKB_50_Standing_height/imputed_UKB_50_Standing_height.{tissue}.enloc.sig.out"),
+            str_glue("../data/fastenloc/imputed_UKB_50_Standing_height/imputed_UKB_50_Standing_height.{tissue}.enloc.sig.out"),
             col_types = "ciddddd"
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
-    separate(Signal, into = c("eqtl", "loc"), sep = "\\(@\\)", convert = TRUE) |>
-    separate(eqtl, into = c("gene_id", "eqtl_cluster"), sep = ":", convert = TRUE)
+    separate_wider_delim(Signal, "(@)", names = c("eqtl", "loc")) |>
+    separate_wider_delim(eqtl, ":", names = c("gene_id", "eqtl_cluster"))
 ```
 
 ```{r}
@@ -51,4 +48,3 @@ d_top2 <- d |>
     select(tissue, gene_id, RCP)
 d_top2
 ```
-
