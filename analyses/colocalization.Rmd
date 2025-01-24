@@ -1,0 +1,194 @@
+---
+title: "Vestibular colocalization and gene info"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    code_folding: hide
+---
+
+## Colocalization
+
+I used [fastENLOC](https://github.com/xqwen/fastenloc) to test for colocalization of GWAS associations with cis-eQTLs in 49 GTEx tissues. Colocalization was run separately for each tissue.
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+d <- tibble(tissue = read_lines("data/eqtl/tissues.txt")) |>
+    group_by(tissue) |>
+    summarise(
+        read_table(
+            str_glue("data/fastenloc/EUR_balance180.{tissue}.enloc.sig.out"),
+            col_types = "ciddddd"
+        ),
+        .groups = "drop"
+    ) |>
+    separate(Signal, into = c("eqtl", "loc"), sep = "\\(@\\)", convert = TRUE) |>
+    separate(eqtl, into = c("gene_id", "eqtl_cluster"), sep = ":", convert = TRUE)
+```
+
+fastENLOC uses Bayesian statistics and reports colocalizations at the SNP, locus, and gene level, but the main result is RCP, regional colocalization probability, per gene. It is the probability that any single SNP in the region is causal for both signals. That means that if the GWAS and eQTL signals are spread across multiple SNPs in high LD, the RCP will not be high because the probability of any one of the SNPs being causal for both is not high.
+
+```{r}
+d_top <- d |>
+    filter(RCP > 0.01) |>
+    arrange(desc(RCP)) |>
+    select(tissue, gene_id, RCP)
+d_top
+```
+
+Showing only maximum RCP per gene in any tissue:
+
+```{r}
+d_top2 <- d |>
+    filter(RCP > 0.01) |>
+    group_by(gene_id) |>
+    slice_max(order_by = RCP, n = 1) |>
+    ungroup() |>
+    arrange(desc(RCP)) |>
+    select(tissue, gene_id, RCP)
+d_top2
+```
+
+In the original fastENLOC paper, they define putative causal gene contributors as genes with RCP > 0.1. More info on those genes (as expected, the top few genes are genes within the GWAS loci reported in the paper):
+
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000204682 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000078403 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000196653 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000078403 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000180592 -->
+
+<!-- All top continuous variables are BMI related. But I sampled some genes from the data at random and that seems to be a common occurrence. -->
+
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000170165 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000178222 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000231074 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000139323 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000163807 -->
+<!-- https://exphewas.statgen.org/v1/gene/ENSG00000230641 -->
+
+```{r}
+genes <- read_tsv("data/reference/human_gene_info.txt", col_types = "cciicccc") |>
+    select(gene_id = `Gene stable ID`,
+           gene_name = `Gene name`,
+           synonym = `Gene Synonym`,
+           chrom = `Chromosome/scaffold name`,
+           tss = `Transcription start site (TSS)`,
+           # wikigene_id = `WikiGene ID`,
+           description = `Gene description`) |>
+    filter(gene_id %in% d_top$gene_id) |>
+    group_by(gene_id) |>
+    # sample_n(1) |>
+    # ungroup()
+    summarise(
+        gene_name = gene_name[1],
+        chrom = chrom[1],
+        tss = sample(tss, 1),
+        synonym = str_c(unique(synonym), collapse = "; "),
+        description = description[1],
+        .groups = "drop"
+    )
+    # arrange(chrom, tss)
+# genes
+# Order by top colocs:
+d_top |>
+    distinct(gene_id) |>
+    left_join(genes, by = "gene_id")
+```
+
+## Predicted genes
+
+I looked at GTEx gene expression, eQTLs, and sQTLs for the predicted genes within GWAS loci from the paper.
+
+```{r}
+pred_genes <- read_tsv("data/predicted_genes.tsv", col_types = "ccc")
+
+expr <- read_tsv("data/eqtl/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
+                 skip = 2, col_types = cols(Name = "c", Description = "c", .default = "d")) |>
+    # mutate(Name = str_replace(Name, "\\..+$", "")) |>
+    rename(gene_id = Name,
+           gene_name = Description) |>
+    filter(gene_name %in% pred_genes$gene_name) |>
+    pivot_longer(c(-gene_id, -gene_name), names_to = "tissue", values_to = "med_tpm") |>
+    mutate(tissue_group = str_replace(tissue, " - .+$", ""),
+           tissue_brain = if_else(tissue_group == "Brain", "Brain", "Other"))
+```
+
+I'm replacing KPNA17 with KPNA2, since I can't find KPNA17, and KPNA2 is in the QTL region. I'm also ignoring COMMD3-BMI1, which is a readthrough transcript of two other predicted genes, and it isn't in the GTEx data.
+
+```{r}
+# expr |>
+#     mutate(log2_med_tpm = log2(med_tpm + 1)) |>
+#     ggplot(aes(x = gene_name, y = log2_med_tpm), color = tissue) +
+#     # geom_point() +
+#     geom_boxplot()
+```
+
+```{r}
+expr |>
+    mutate(log2_med_tpm = log2(med_tpm + 1)) |>
+    ggplot(aes(x = gene_name, y = log2_med_tpm, fill = tissue_brain)) +
+    # geom_jitter()
+    # ggbeeswarm::geom_beeswarm()
+    geom_boxplot() +
+    xlab("Gene") +
+    ylab("log2(median(TPM) + 1) per tissue") +
+    ggtitle("Expression of genes in brain and non-brain tissues") +
+    labs(caption = "TPM = transcripts per million") +
+    theme_bw() +
+    theme(
+        axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90),
+        legend.title = element_blank(),
+    )
+```
+
+```{r}
+eqtls <- tibble(fname = list.files("data/eqtl/GTEx_Analysis_v8_eQTL_independent/")) |>
+    mutate(tissue = str_replace(fname, "\\.v8.+$", "")) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(
+            str_c("data/eqtl/GTEx_Analysis_v8_eQTL_independent/", fname),
+            col_types = cols(gene_id = "c", variant_id = "c", pval_beta = "d", .default = "-")
+        ),
+        .groups = "drop"
+    ) |>
+    filter(gene_id %in% expr$gene_id) |>
+    left_join(distinct(expr, gene_id, gene_name), by = "gene_id") |>
+    relocate(gene_id, gene_name, .after = tissue)
+
+sqtls <- tibble(fname = list.files("data/eqtl/GTEx_Analysis_v8_sQTL_independent/")) |>
+    mutate(tissue = str_replace(fname, "\\.v8.+$", "")) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(
+            str_c("data/eqtl/GTEx_Analysis_v8_sQTL_independent/", fname),
+            col_types = cols(group_id = "c", variant_id = "c", pval_beta = "d", .default = "-")
+        ),
+        .groups = "drop"
+    ) |>
+    rename(gene_id = group_id) |>
+    filter(gene_id %in% expr$gene_id) |>
+    left_join(distinct(expr, gene_id, gene_name), by = "gene_id") |>
+    relocate(gene_id, gene_name, .after = tissue)
+```
+
+#### cis-eQTLs
+
+For some genes, multiple independent cis-eQTLs were found in the same tissue.
+
+```{r}
+eqtls
+```
+
+#### cis-sQTLs
+
+These are variants associated with altered usage of splice junctions within a gene. For some genes, multiple independent cis-sQTLs were found in the same tissue.
+
+```{r}
+sqtls
+```

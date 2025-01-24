@@ -1,0 +1,54 @@
+---
+title: "GTEx harmonized GWAS colocalization"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    code_folding: hide
+---
+
+This is a positive control using GTEx harmonized GWAS for height in UK Biobank.
+
+I used [fastENLOC](https://github.com/xqwen/fastenloc) to test for colocalization of GWAS associations with cis-eQTLs in 49 GTEx tissues. Colocalization was run separately for each tissue.
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+d <- tibble(tissue = read_lines("data/eqtl/tissues.txt")) |>
+    group_by(tissue) |>
+    summarise(
+        read_table(
+            str_glue("data/fastenloc/imputed_UKB_50_Standing_height/imputed_UKB_50_Standing_height.{tissue}.enloc.sig.out"),
+            col_types = "ciddddd"
+        ),
+        .groups = "drop"
+    ) |>
+    separate(Signal, into = c("eqtl", "loc"), sep = "\\(@\\)", convert = TRUE) |>
+    separate(eqtl, into = c("gene_id", "eqtl_cluster"), sep = ":", convert = TRUE)
+```
+
+```{r}
+d_top <- d |>
+    filter(RCP > 0.5) |>
+    arrange(desc(RCP)) |>
+    select(tissue, gene_id, RCP)
+d_top
+```
+
+Showing only maximum RCP per gene in any tissue:
+
+```{r}
+d_top2 <- d |>
+    filter(RCP > 0.5) |>
+    group_by(gene_id) |>
+    slice_max(order_by = RCP, n = 1) |>
+    ungroup() |>
+    arrange(desc(RCP)) |>
+    select(tissue, gene_id, RCP)
+d_top2
+```
+
